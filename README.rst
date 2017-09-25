@@ -1,6 +1,8 @@
 mac-to-peer
 ===========
 
+|PYPI Version| |Python Versions|
+
 Automatically fetch MAC/IP address tables (ARP and IPv6 neighbors) from devices and build MAC address to BGP peer ASN mappings.
 
 Particularly focused on building **pmacct**'s *bgp_peer_src_as_map* `file <https://github.com/pmacct/pmacct/blob/master/examples/peers.map.example>`__.
@@ -100,3 +102,7 @@ Author
 Pier Carlo Chiodi - https://pierky.com/
 
 Blog: https://blog.pierky.com/ Twitter: `@pierky <https://twitter.com/pierky>`_
+
+.. |PYPI Version| image:: https://img.shields.io/pypi/v/mactopeer.svg
+    :target: https://pypi.python.org/pypi/mactopeer/
+.. |Python Versions| image:: https://img.shields.io/pypi/pyversions/mactopeer.svg
