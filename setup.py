@@ -55,6 +55,10 @@ long_description = '\n\n'.join([description, changes])
 exec(open(join(current_dir, "pierky/mactopeer/version.py")).read())
 
 install_requires = []
+with open("requirements.txt", "r") as f:
+    for line in f.read().split("\n"):
+        if line:
+            install_requires.append(line)
 
 # Get the long description from README.md
 setup(

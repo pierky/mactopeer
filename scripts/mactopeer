@@ -17,6 +17,7 @@
 
 import argparse
 import getpass
+import ipaddress
 import json
 import logging
 import os
@@ -306,8 +307,16 @@ def get_mac_peer_table_from_host(host, filters):
 
             if mac.lower() in filter_mac:
                 continue
-            if ip.lower() in filter_ip:
-                continue
+
+            if filter_ip:
+                ip_obj = ipaddress.ip_address(ip.decode("utf-8"))
+                filtered = False
+                for filtered_ip in filter_ip:
+                    if ip_obj in filtered_ip:
+                        filtered = True
+                        break
+                if filtered:
+                    continue
 
             if mac not in res:
                 res[mac] = {
@@ -423,7 +432,9 @@ def build_filters(args):
     if args.ignore_mac:
         mac = build_filter(args.ignore_mac)
     if args.ignore_ip:
-        ip = build_filter(args.ignore_ip)
+        raw_ip_addrs = build_filter(args.ignore_ip)
+        for raw_ip_addr in raw_ip_addrs:
+            ip.append(ipaddress.ip_network(raw_ip_addr.decode("utf-8")))
     if args.ignore_asn:
         asn = build_filter(args.ignore_asn)
 
@@ -544,7 +555,7 @@ def main():
     )
     group.add_argument(
         "--ignore-ip",
-        help="list of IP addresses that will be ignored.",
+        help="list of IP addresses or prefixes that will be ignored.",
         metavar="LIST_OR_FILE"
     )
     group.add_argument(
