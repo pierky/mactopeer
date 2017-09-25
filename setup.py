@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 """
 New release procedure
 
-- edit pierky/arouteserver/version.py
+- edit pierky/mactopeer/version.py
 
 - edit CHANGES.rst
 
