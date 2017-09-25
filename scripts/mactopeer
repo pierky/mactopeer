@@ -1,0 +1,608 @@
+#!/usr/bin/env python
+
+# Copyright (C) 2017 Pier Carlo Chiodi
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import argparse
+import getpass
+import json
+import logging
+import os
+try:
+    from Queue import Queue, Empty
+except ImportError:
+    from queue import Queue, Empty
+import sys
+import threading
+
+try:
+    import napalm_base
+except ImportError:
+    print("")
+    print("ERROR: can't load NAPALM library.")
+    print("")
+    print("Please install it by executing a full installation... ")
+    print("")
+    print("   pip install napalm")
+    print("")
+    print("... or a partial installation based on the subset of "
+          "drivers you really need:")
+    print("")
+    print("   pip install napalm-ios napalm-junos")
+    print("")
+    print("Details here: https://napalm.readthedocs.io/en/latest/installation/index.html")
+    print("")
+    sys.exit(1)
+
+from pierky.mactopeer.version import __version__, COPYRIGHT_YEAR
+
+logger = logging.getLogger("mac-to-peer")
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+def get_optional_args(s):
+    return {x.split('=')[0]: x.split('=')[1]
+            for x in s.split(',')}
+
+def validate_device(d):
+    if "hostname" not in d:
+        raise ValueError("Missing 'hostname'")
+    if not d["hostname"].strip():
+        raise ValueError("Empty value for 'hostname'")
+    if "vendor" not in d:
+        raise ValueError("Missing 'vendor'")
+    if not d["vendor"].strip():
+        raise ValueError("Empty value for 'vendor'")
+    if not d.get("username", None):
+        logger.warning("No username given for {}; "
+                       "this can lead to authentication "
+                       "problems if no other methods are "
+                       "supported.".format(d["hostname"]))
+
+def write_results_pmacct(data, devices, out):
+    # Tuples (hostname, pmacct_ip).
+    pmacct_info = []
+
+    # Used just to format the lines that will form bgp_peer_src_as_map.
+    max_pmacct_ip_len = 20
+    for hostname in data:
+        pmacct_ip = hostname
+        for device in devices:
+            if device["hostname"] == hostname:
+                pmacct_ip = device.get("pmacct_ip", hostname)
+                break
+        if len(pmacct_ip) > max_pmacct_ip_len:
+            max_pmacct_ip_len = len(pmacct_ip)
+
+        pmacct_info.append((hostname, pmacct_ip))
+
+    tpl = "id={asn:10} ip={ip:" + str(max_pmacct_ip_len) + "} src_mac={mac}\n"
+
+    for hostname, pmacct_ip in pmacct_info:
+        for mac in data[hostname]:
+            peer_asns = data[hostname][mac]["peer_asns"]
+            if not peer_asns:
+                continue
+            for asn in peer_asns:
+                out.write(tpl.format(
+                    asn=asn,
+                    ip=pmacct_ip,
+                    mac=mac
+                ))
+
+def build_devices(args):
+    if not args.devices and not args.hostname:
+        print("ERROR: one of the arguments --devices --hostname is required")
+        sys.exit(1)
+
+    devices = []
+    if args.devices:
+        try:
+            devices = json.load(args.devices)
+        except Exception as e:
+            print("ERROR: can't parse the JSON file "
+                  "given in --devices: {}".format(str(e)))
+            sys.exit(1)
+    else:
+        if not args.vendor:
+            print("ERROR: --vendor is mandatory when --hostname is used.")
+            sys.exit(1)
+
+        devices.append({
+            "hostname": args.hostname,
+            "username": None,
+            "password": None,
+            "vendor": None,
+            "arp_only": False,
+            "optional_args": {}
+        })
+
+    password = None
+    if args.password:
+        if args.password == '-' and not args.read_from_cache:
+            try:
+                password = getpass.getpass('Enter password: ')
+            except KeyboardInterrupt:
+                print("Aborted!")
+                sys.exit(1)
+        else:
+            password = args.password
+
+    unique_hostname = []
+    for device in devices:
+        if args.username:
+            device["username"] = args.username
+        if password:
+            device["password"] = password
+        if args.vendor:
+            device["vendor"] = args.vendor
+        if args.arp_only:
+            device["arp_only"] = True
+        if args.optional_args:
+            device["optional_args"] = get_optional_args(args.optional_args)
+
+        if device["hostname"] in unique_hostname:
+            print("ERROR: duplicate devices: '{}'".format(device["hostname"]))
+            sys.exit(1)
+
+        try:
+            validate_device(device)
+        except ValueError as e:
+            print("ERROR: invalid device configuration: {}".format(str(e)))
+            sys.exit(1)
+
+        unique_hostname.append(device["hostname"])
+
+    return devices
+
+def load_data_from_devices(args, devices):
+    data = {}
+
+    if len(devices) == 1:
+        device = devices[0]
+        res = get_data_from_device(device)
+        if res:
+            data[device["hostname"]] = res
+    else:
+        tasks = Queue()
+        for device in devices:
+            tasks.put(device)
+
+        threads = []
+        for i in range(args.threads):
+            threads.append(
+                threading.Thread(target=process_queue, args=(tasks, data))
+            )
+        for thread in threads:
+            thread.start()
+
+        tasks.join()
+
+        for thread in threads:
+            thread.join()
+
+    if args.write_to_cache:
+        json.dump(data, args.write_to_cache)
+
+    return data
+
+def process_queue(q, data):
+    while True:
+        try:
+            device = q.get(block=False)
+        except Empty:
+            return
+
+        res = get_data_from_device(device)
+        if res:
+            data[device["hostname"]] = res
+        q.task_done()
+
+def get_data_from_device(device):
+    try:
+        driver = napalm_base.get_network_driver(device["vendor"])
+    except napalm_base.exceptions.ModuleImportError as e:
+        url = "https://napalm.readthedocs.io/en/latest/support/index.html"
+        logger.error("Can't load the NAPALM driver for vendor '{}': {} - "
+                     "Please be sure the vendor is one of those supported "
+                     "by NAPALM (the 'vendor' argument must be filled with "
+                     "a value taken from the 'Driver Name' row of the table "
+                     "at this URL: {}).".format(
+                         device["vendor"], str(e), url
+                       ))
+        return None
+
+    connection = driver(
+        hostname=device["hostname"],
+        username=device.get("username", None),
+        password=device.get("password", None),
+        optional_args=device.get("optional_args", {})
+    )
+
+    hostname = device["hostname"]
+
+    logger.info("Connecting to {}...".format(hostname))
+    try:
+        connection.open()
+    except Exception as e:
+        logger.error("Can't connect to {}: {}".format(
+            hostname, str(e)))
+        return None
+    
+    arp_table = []
+    logger.info("Getting ARP table from {}...".format(hostname))
+    try:
+        arp_table = connection.get_arp_table()
+    except Exception as e:
+        logger.error("Can't get ARP table from {}: {}".format(
+            hostname, str(e)))
+        return None
+
+    ipv6_neighbors_table = []
+    if not device.get("arp_only", False):
+        logger.info("Getting IPv6 neighbors table from {}...".format(hostname))
+        try:
+            ipv6_neighbors_table = connection.get_ipv6_neighbors_table()
+        except AttributeError as e:
+            logger.warning("Skipping IPv6 neighbors table: "
+                           "please consult the Caveats section of README")
+        except Exception as e:
+            logger.error("Can't get IPv6 neighbors table from {}: {}".format(
+                hostname, str(e)))
+            return None
+
+    bgp_neighbors = {}
+    logger.info("Getting BGP neighbors from {}...".format(hostname))
+    try:
+        bgp_neighbors = connection.get_bgp_neighbors()
+    except Exception as e:
+        logger.error("Can't get BGP neighbors from {}: {}".format(
+            hostname, str(e)))
+        return None
+
+    logger.info("Disconnecting from {}...".format(hostname))
+    try:
+        connection.close()
+    except Exception as e:
+        logger.warning("Error while disconnecting from {}: {}".format(
+            hostname, str(e)))
+
+    return {
+        "arp": arp_table,
+        "ipv6_neighbors": ipv6_neighbors_table,
+        "bgp_neighbors": bgp_neighbors
+    }
+
+def get_mac_peer_table_from_host(host, filters):
+    res = {}
+
+    peers = host["bgp_neighbors"]["global"]["peers"]
+    arp_table = host["arp"]
+    ipv6_neighbors_table = host["ipv6_neighbors"]
+
+    filter_mac, filter_ip, filter_asn = filters
+
+    for lst in [arp_table, ipv6_neighbors_table]:
+        for entry in lst:
+            mac = entry["mac"]
+            ip = entry["ip"]
+            iface = entry["interface"]
+
+            if mac.lower() in filter_mac:
+                continue
+            if ip.lower() in filter_ip:
+                continue
+
+            if mac not in res:
+                res[mac] = {
+                    "ip_addrs": [],
+                    "ifaces": [],
+                    "peer_asns": {
+                    }
+                }
+
+            if ip not in res[mac]["ip_addrs"]:
+                res[mac]["ip_addrs"].append(ip)
+
+            if iface not in res[mac]["ifaces"]:
+                res[mac]["ifaces"].append(iface)
+
+            if ip in peers:
+                asn = str(peers[ip]["remote_as"])
+                descr = peers[ip]["description"]
+
+                if asn in filter_asn:
+                    continue
+
+                if asn not in res[mac]["peer_asns"]:
+                    res[mac]["peer_asns"][asn] = {
+                        "description": descr,
+                        "ip_addrs": [ip]
+                    }
+
+            if ip not in res[mac]["ip_addrs"]:
+                res[mac]["ip_addrs"].append(ip)
+
+            if len(res[mac]["peer_asns"]) > 1:
+                logger.warning(
+                    "MAC address {mac} used for "
+                    "{cnt} different peers: {peers}".format(
+                        mac=mac,
+                        cnt=len(res[mac]["peer_asns"]),
+                        peers=", ".join(res[mac]["peer_asns"])
+                    )
+                )
+
+    return res
+
+def get_mac_peer_table(data, filters):
+    res = {}
+
+    for hostname in data:
+        res[hostname] = get_mac_peer_table_from_host(data[hostname], filters)
+
+    return res
+
+def print_help_devices():
+    s = """
+The JSON file provided via the --devices argument must contain the list of
+devices which data will be fetched from.
+It must respect the following schema:
+[
+  {
+    "hostname": "IP address or hostname",
+    "vendor": "see below",
+    "username": "username",
+    "password": "password",
+    "arp_only": true|false,
+    "optional_args": {
+      "arg1_name": "arg1_value",
+      "arg2_name": "arg2_value",
+      ...
+    }
+    "pmacct_ip": "IP address
+  }, {
+    <same as above>
+  }
+]
+
+Only "hostname" and "vendor" are mandatory.
+
+- "hostname" is the IP address or hostname used to connect to the device.
+
+- "vendor" is the name of the driver used by NAPALM to identify the type of 
+device: it must be one of the values reported in the "Driver name" row of this
+table:
+http://napalm.readthedocs.io/en/latest/support/index.html
+
+- "username" and "password" are used to authenticating to the device. The
+password can be omitted and provided via CLI by running the program with the
+"--password -" argument.
+
+- "arp_only", if set, prevents the program from fetching IPv6 neighbors table
+from the devices.
+
+- "optional_args" can be used to pass additional arguments to the NAPALM
+driver used to connect to the device. A list of available arguments can be
+found here:
+http://napalm.readthedocs.io/en/latest/support/index.html#optional-arguments
+
+- "pmacct_ip" is only used when the output format is set to "pmacct"
+("--format pmacct" argument); its value is used to fill the "ip" field of
+pmacct's "bgp_peer_src_as_map" and it can be used to provide an IP address
+different from the one given in "hostname".
+"""
+    print(s)
+
+def build_filter(list_or_file):
+    if os.path.exists(os.path.expanduser(list_or_file)):
+        with open(list_or_file, "r") as f:
+            return [_.lower() for _ in f.read().split("\n")]
+    return [_.lower() for _ in list_or_file.split(",")]
+
+def build_filters(args):
+    mac = []
+    ip = []
+    asn = []
+    if args.ignore_mac:
+        mac = build_filter(args.ignore_mac)
+    if args.ignore_ip:
+        ip = build_filter(args.ignore_ip)
+    if args.ignore_asn:
+        asn = build_filter(args.ignore_asn)
+
+    return mac, ip, asn
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="mac-to-peer v{}: a tool to automatically "
+                    "build a list of BGP neighbors starting from "
+                    "the MAC address of their peers.".format(
+                        __version__
+                    ),
+        epilog="Copyright (c) {} - Pier Carlo Chiodi - "
+               "https://pierky.com".format(COPYRIGHT_YEAR)
+    )
+    parser.add_argument(
+        "--help-devices",
+        help="show details about the format of the JSON file "
+             "that must be used to build the --devices file.",
+        action="store_true"
+    )
+
+    group = parser.add_argument_group(
+        title="Device(s) to get the data from",
+        description="To use a list of devices the --devices "
+                    "argument must be used; a single device can "
+                    "be given using the --hostname argument."
+    )
+    group.add_argument(
+        "--devices",
+        help="path to the JSON file that contains the list of "
+             "devices from which to get the data. Use '-' to "
+             "read from stdin. "
+             "Use the --help-devices argument to show details "
+             "about the format of that JSON file.",
+        type=argparse.FileType("r")
+    )
+    group.add_argument(
+        "--hostname",
+        help="IP address or hostname of the device from which "
+             "to get the data."
+    )
+    group = parser.add_argument_group(
+        title="Device(s) authentication and connection info",
+        description="The following arguments, when provided, overried "
+                    "those reported within the JSON file given in "
+                    "the --devices argument."
+    )
+    group.add_argument(
+        "-u", "--username",
+        help="username for authenticating to the device(s)."
+    )
+    group.add_argument(
+        "-p", "--password",
+        help="password for authenticating to the device(s). "
+             "Use '-' in order to be prompted."
+    )
+    group.add_argument(
+        "-v", "--vendor",
+        help="name of the NAPALM driver that must be used to connect to "
+             "the device. It is mandatory if --hostname is used. "
+             "It must be one of the values from the "
+             "'Driver name' row of the following table: "
+             "http://napalm.readthedocs.io/en/latest/support/index.html"
+             "#general-support-matrix"
+    )
+    group.add_argument(
+        "--arp-only",
+        help="when set, it prevents the program from fetching IPv6 neighbors "
+             "from the device(s).",
+        action="store_true"
+    )
+    group.add_argument(
+        "--optional-args",
+        help="list of comma separated key=value pairs passed to "
+             "Napalm drivers. For the list of supported optional "
+             "arguments see this URL: "
+             "http://napalm.readthedocs.io/en/latest/support/index.html#"
+             "optional-arguments"
+    )
+
+    group = parser.add_argument_group(
+        title="Output options"
+    )
+    group.add_argument(
+        "-o", "--output",
+        type=argparse.FileType("w"),
+        help="output file. Default: stdout.",
+        default=sys.stdout,
+        dest="output_file"
+    )
+    group.add_argument(
+        "-f", "--format",
+        choices=["json", "pmacct"],
+        help="output format. When 'pmacct' is used, the output "
+             "is built using the format of pmacct's bgp_peer_src_as_map "
+             "(https://github.com/pmacct/pmacct/blob/"
+             "c9d6b210210bc3232d6c31683103963ab2b15953/QUICKSTART#L1120 "
+             "and also "
+             "https://github.com/pmacct/pmacct/blob/master/examples/"
+             "peers.map.example). Default: %(default)s.",
+        default="json"
+    )
+
+    group = parser.add_argument_group(
+        title="Filters",
+        description="The following arguments can be used to filter out "
+                    "entries on the basis of their MAC address, IP address "
+                    "or peer ASN. Each argument can be set with a "
+                    "comma-separated list of values (ex. --ignore-ip "
+                    "192.168.0.1,10.0.0.1) or with the path to a file "
+                    "containing one value on each line."
+    )
+    group.add_argument(
+        "--ignore-mac",
+        help="list of MAC addresses that will be ignored.",
+        metavar="LIST_OR_FILE"
+    )
+    group.add_argument(
+        "--ignore-ip",
+        help="list of IP addresses that will be ignored.",
+        metavar="LIST_OR_FILE"
+    )
+    group.add_argument(
+        "--ignore-asn",
+        help="list of ASNs that will be ignored.",
+        metavar="LIST_OR_FILE"
+    )
+
+    group = parser.add_argument_group(
+        title="Misc options"
+    )
+    group.add_argument(
+        "--threads",
+        type=int,
+        help="number of threads that will be used to fetch info "
+             "from devices. Default: %(default)s.",
+        default=4
+    )
+    group.add_argument(
+        "--write-to-cache",
+        type=argparse.FileType("w"),
+        help="if provided, data fetched from devices are saved "
+             "into this file for later use via the --read-from-cache "
+             "argument.",
+        metavar="CACHE_FILE"
+    )
+    group.add_argument(
+        "--read-from-cache",
+        type=argparse.FileType("r"),
+        help="if provided, data are not fetched from devices but "
+             "read from the CACHE_FILE file.",
+        metavar="CACHE_FILE"
+    )
+
+    args = parser.parse_args()
+
+    if args.help_devices:
+        print_help_devices()
+        return 0
+
+    filters = build_filters(args)
+
+    devices = build_devices(args)
+
+    if not args.read_from_cache:
+        data = load_data_from_devices(args, devices)
+    else:
+        data = json.load(args.read_from_cache)
+
+    mac_peer_table = get_mac_peer_table(data, filters)
+
+    if args.format == "json":
+        json.dump(mac_peer_table, args.output_file, indent=2, sort_keys=True)
+    elif args.format == "pmacct":
+        write_results_pmacct(mac_peer_table, devices, args.output_file)
+    else:
+        raise NotImplementedError()
+
+    return 0
+
+main()
