@@ -8,10 +8,10 @@ Usage
                    [--arp-only] [--optional-args OPTIONAL_ARGS] [-o OUTPUT_FILE]
                    [-f {json,pmacct}] [--ignore-mac LIST_OR_FILE]
                    [--ignore-ip LIST_OR_FILE] [--ignore-asn LIST_OR_FILE]
-                   [--threads THREADS] [--write-to-cache CACHE_FILE]
-                   [--read-from-cache CACHE_FILE]
+                   [--threads THREADS] [--use-peeringdb]
+                   [--write-to-cache CACHE_FILE] [--read-from-cache CACHE_FILE]
   
-  mac-to-peer v0.1.0: a tool to automatically build a list of BGP neighbors
+  mac-to-peer v0.2.0: a tool to automatically build a list of BGP neighbors
   starting from the MAC address of their peers.
   
   optional arguments:
@@ -73,13 +73,17 @@ Usage
     --ignore-mac LIST_OR_FILE
                           list of MAC addresses that will be ignored.
     --ignore-ip LIST_OR_FILE
-                          list of IP addresses that will be ignored.
+                          list of IP addresses or prefixes that will be ignored.
     --ignore-asn LIST_OR_FILE
                           list of ASNs that will be ignored.
   
   Misc options:
     --threads THREADS     number of threads that will be used to fetch info from
                           devices. Default: 4.
+    --use-peeringdb       use PeeringDB to obtain the ASN of those entries which
+                          have not a straight BGP session on the router (for
+                          example multi-lateral peering sessions at IXs via
+                          route server).
     --write-to-cache CACHE_FILE
                           if provided, data fetched from devices are saved into
                           this file for later use via the --read-from-cache

@@ -84,11 +84,16 @@ The ``--help`` shows all the options this program offers. See `its output in USA
 
 A list of devices can be provided using an input JSON file: for details about its schema please run ``mactopeer --help-devices``. See `its output in USAGE.rst <USAGE.rst#devices-json-file-schema>`__.
 
-Filters can be set to skip entries on the basis of their MAC address, IP address or resulting peer ASN.
+Filters can be set to skip entries on the basis of their MAC address, IP address or resulting peer ASN. Useful to exclude iBGP sessions or to handle exceptions.
 
 Multithreading is also supported to fetch information from more than one device concurrently.
 
 The list of supported devices can be found in the `Supported Devices <https://napalm.readthedocs.io/en/latest/support/index.html>`__ section of the NAPALM's documentation website. All those implementing the ``get_arp_table`` and ``get_bgp_neighbors`` methods should work: at time of writing they are EOS, IOS, IOSX-R, JunOS, NXOS, VyOS.
+
+Integration with PeeringDB
+++++++++++++++++++++++++++
+
+The ``--use-peeringdb`` argument can be used to fetch missing peers' ASNs from PeeringDB, for example in case of multi-lateral peering (such as route servers at IXPs). In this case, routers have not a straight mapping between IP address and BGP neighborship, so the IP address is used to look into PeeringDB records to find the network which is using it.
 
 Caveats
 -------
