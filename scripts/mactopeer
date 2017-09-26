@@ -93,25 +93,26 @@ def write_results_pmacct(data, devices, out):
 
         pmacct_info.append((hostname, pmacct_ip))
 
-    tpl = "id={asn:10} ip={ip:" + str(max_pmacct_ip_len) + "} src_mac={mac}{comment}\n"
+    tpl = "id={asn:10} ip={ip:" + str(max_pmacct_ip_len) + "} src_mac={mac}\n\n"
 
     for hostname, pmacct_ip in pmacct_info:
+        out.write("! {}\n".format(hostname))
         for mac in sorted(data[hostname]):
             peer_asns = data[hostname][mac]["peer_asns"]
             if not peer_asns:
                 continue
             for asn in sorted(peer_asns):
+                out.write("! {ip} {name}{via_pdb}\n".format(
+                    ip=", ".join(peer_asns[asn]["ip_addrs"]),
+                    name=peer_asns[asn]["description"],
+                    via_pdb=" (from PeeringDB)"
+                            if peer_asns[asn].get("from_peeringdb", False)
+                            else ""
+                ))
                 out.write(tpl.format(
                     asn=asn,
                     ip=pmacct_ip,
-                    mac=mac,
-                    comment=" ! {ip} {name} {via_pdb}".format(
-                        ip=", ".join(peer_asns[asn]["ip_addrs"]),
-                        name=peer_asns[asn]["description"],
-                        via_pdb=" (from PeeringDB)"
-                                if peer_asns[asn].get("from_peeringdb", False)
-                                else ""
-                        )
+                    mac=mac
                 ))
 
 def build_devices(args):
@@ -291,6 +292,31 @@ def get_data_from_device(device):
         logger.warning("Error while disconnecting from {}: {}".format(
             hostname, str(e)))
 
+    # Normalize data
+    arp_table = [{
+        "interface": _["interface"],
+        "ip": str(ipaddress.ip_address(_["ip"])),
+        "mac": _["mac"].strip().lower()
+    } for _ in arp_table]
+
+    ipv6_neighbors_table = [{
+        "interface": _["interface"],
+        "ip": str(ipaddress.ip_address(_["ip"])),
+        "mac": _["mac"].strip().lower()
+    } for _ in ipv6_neighbors_table]
+
+    peers = bgp_neighbors["global"]["peers"]
+    bgp_neighbors = {
+        "global": {
+            "peers": {
+                _.lower(): {
+                    "remote_as": peers[_]["remote_as"],
+                    "description": peers[_]["description"]
+                } for _ in peers
+            }
+        }
+    }
+
     return {
         "arp": arp_table,
         "ipv6_neighbors": ipv6_neighbors_table,
@@ -312,9 +338,11 @@ def get_mac_peer_table_from_host(host, filters):
             ip = entry["ip"]
             iface = entry["interface"]
 
+            # MAC address filtered out?
             if mac.lower() in filter_mac:
                 continue
 
+            # IP address filtered out?
             if filter_ip:
                 ip_obj = ipaddress.ip_address(ip.decode("utf-8"))
                 filtered = False
@@ -325,6 +353,7 @@ def get_mac_peer_table_from_host(host, filters):
                 if filtered:
                     continue
 
+            # Add MAC address to the resultset
             if mac not in res:
                 res[mac] = {
                     "ip_addrs": [],
@@ -339,10 +368,12 @@ def get_mac_peer_table_from_host(host, filters):
             if iface not in res[mac]["ifaces"]:
                 res[mac]["ifaces"].append(iface)
 
+            # Is there a BGP neighbor for the IP address?
             if ip in peers:
                 asn = str(peers[ip]["remote_as"])
                 descr = peers[ip]["description"]
 
+                # ASN filtered out?
                 if asn in filter_asn:
                     continue
 
@@ -352,8 +383,8 @@ def get_mac_peer_table_from_host(host, filters):
                         "ip_addrs": [ip]
                     }
 
-            if ip not in res[mac]["ip_addrs"]:
-                res[mac]["ip_addrs"].append(ip)
+                if ip not in res[mac]["peer_asns"][asn]["ip_addrs"]:
+                    res[mac]["peer_asns"][asn]["ip_addrs"].append(ip)
 
             if len(res[mac]["peer_asns"]) > 1:
                 logger.warning(
