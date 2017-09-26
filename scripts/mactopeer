@@ -20,11 +20,11 @@ import getpass
 import ipaddress
 import json
 import logging
+import math
 import os
-try:
-    from Queue import Queue, Empty
-except ImportError:
-    from queue import Queue, Empty
+from six.moves import queue
+from six.moves.urllib.request import urlopen
+from six.moves.urllib.error import HTTPError
 import sys
 import threading
 
@@ -82,7 +82,7 @@ def write_results_pmacct(data, devices, out):
 
     # Used just to format the lines that will form bgp_peer_src_as_map.
     max_pmacct_ip_len = 20
-    for hostname in data:
+    for hostname in sorted(data):
         pmacct_ip = hostname
         for device in devices:
             if device["hostname"] == hostname:
@@ -93,18 +93,25 @@ def write_results_pmacct(data, devices, out):
 
         pmacct_info.append((hostname, pmacct_ip))
 
-    tpl = "id={asn:10} ip={ip:" + str(max_pmacct_ip_len) + "} src_mac={mac}\n"
+    tpl = "id={asn:10} ip={ip:" + str(max_pmacct_ip_len) + "} src_mac={mac}{comment}\n"
 
     for hostname, pmacct_ip in pmacct_info:
-        for mac in data[hostname]:
+        for mac in sorted(data[hostname]):
             peer_asns = data[hostname][mac]["peer_asns"]
             if not peer_asns:
                 continue
-            for asn in peer_asns:
+            for asn in sorted(peer_asns):
                 out.write(tpl.format(
                     asn=asn,
                     ip=pmacct_ip,
-                    mac=mac
+                    mac=mac,
+                    comment=" ! {ip} {name} {via_pdb}".format(
+                        ip=", ".join(peer_asns[asn]["ip_addrs"]),
+                        name=peer_asns[asn]["description"],
+                        via_pdb=" (from PeeringDB)"
+                                if peer_asns[asn].get("from_peeringdb", False)
+                                else ""
+                        )
                 ))
 
 def build_devices(args):
@@ -181,7 +188,7 @@ def load_data_from_devices(args, devices):
         if res:
             data[device["hostname"]] = res
     else:
-        tasks = Queue()
+        tasks = queue.Queue()
         for device in devices:
             tasks.put(device)
 
@@ -207,7 +214,7 @@ def process_queue(q, data):
     while True:
         try:
             device = q.get(block=False)
-        except Empty:
+        except queue.Empty:
             return
 
         res = get_data_from_device(device)
@@ -367,6 +374,167 @@ def get_mac_peer_table(data, filters):
         res[hostname] = get_mac_peer_table_from_host(data[hostname], filters)
 
     return res
+
+def enrich_via_peeringdb(mac_peer_table, args, filters):
+    _, _, filter_asn = filters
+
+    # List of unique IP addresses that have not a BGP peer on the router.
+    ip_addrs = {
+        "4": [],
+        "6": []
+    }
+    for hostname in mac_peer_table:
+        for mac in mac_peer_table[hostname]:
+            entry = mac_peer_table[hostname][mac]
+            if entry["ip_addrs"] and not entry["peer_asns"]:
+                for ip_addr in entry["ip_addrs"]:
+                    ip_addr_obj = ipaddress.ip_address(ip_addr)
+                    if not ip_addr_obj.is_global:
+                        continue
+                    ip_addr = str(ip_addr_obj)
+                    if ip_addr not in ip_addrs[str(ip_addr_obj.version)]:
+                        ip_addrs[str(ip_addr_obj.version)].append(ip_addr)
+
+    # Chunks of max 20 IP addresses per AFI that will be fetched from PeeringDB
+    chunks = []
+    for ip_ver in ["4", "6"]:
+        chunk = []
+        for ip_addr in ip_addrs[ip_ver]:
+            chunk.append(ip_addr)
+            if len(chunk) >= min(
+                math.ceil(len(ip_addrs[ip_ver]) / float(args.threads)),
+                20
+            ):
+                chunks.append(chunk)
+                chunk = []
+        if chunk:
+            chunks.append(chunk)
+
+    # Threads to fetch data from PDB
+    tasks = queue.Queue()
+    for chunk in chunks:
+        tasks.put(chunk)
+
+    # asns_from_pdb will contain the result: [("ip_addr", "asn", "net name")]
+    asns_from_pdb = []
+    threads = []
+    for i in range(args.threads):
+        threads.append(
+            threading.Thread(
+                target=fetch_asn_from_peeringdb,
+                args=(tasks, asns_from_pdb)
+            )
+        )
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    # asns_from_pdb is ready
+    for hostname in mac_peer_table:
+        for mac in mac_peer_table[hostname]:
+            entry = mac_peer_table[hostname][mac]
+            if entry["ip_addrs"] and not entry["peer_asns"]:
+                for ip_addr, asn, net_name in asns_from_pdb:
+                    if asn in filter_asn:
+                        continue
+                    if ip_addr in entry["ip_addrs"]:
+                        entry["peer_asns"][asn] = {
+                            "description": net_name,
+                            "ip_addrs": [ip_addr],
+                            "from_peeringdb": True
+                        }
+
+def get_url(url):
+    try:
+        response = urlopen(url)
+    except HTTPError as e:
+        if e.code == 404:
+            return
+        else:
+            logging.error(
+                "HTTP error while retrieving info from PeeringDB: "
+                "core: {}, reason: {} - {}".format(
+                    e.code, e.reason, str(e)
+                )
+            )
+            return
+    except Exception as e:
+        logging.error(
+            "Error while retrieving info from PeeringDB: {}".format(
+                str(e)
+            )
+        )
+        return
+
+    raw = response.read().decode("utf-8")
+    return json.loads(raw)
+
+def download_from_peeringdb(ip_addrs):
+    # Returns list of tuple ('ip_addr', 'ASN', 'net name')
+    ip_addr_asn = []
+
+    # Fetch NetIXLan objects from PeeringDB
+    ip_field = "ipaddr{}".format("6" if ":" in ip_addrs[0] else "4")
+
+    url = "https://www.peeringdb.com/api/netixlan?{}__in={}".format(
+        ip_field, ",".join(ip_addrs)
+    )
+
+    netixlan_set = get_url(url)
+    if not netixlan_set:
+        return
+
+    # List of unique net objects that must be fetched from PeeringDB
+    net_ids = []
+    for netixlan in netixlan_set["data"]:
+        net_id = str(netixlan["net_id"])
+        if net_id not in net_ids:
+            net_ids.append(net_id)
+
+    # Fetch Net objects from PeeringDB
+    url = "https://www.peeringdb.com/api/net?id__in={}".format(
+        ",".join(net_ids)
+    )
+
+    net_set = get_url(url)
+    if not net_set:
+        return
+
+    # Dict: {'<net_id>': {'asn': '<ASN>', 'name': '<name>'}}
+    net_id_asn = {}
+    for net in net_set["data"]:
+        net_id_asn[str(net["id"])] = {
+            'asn': str(net["asn"]),
+            'name': net["name"].strip()
+        }
+
+    # Results
+    for netixlan in netixlan_set["data"]:
+        net_id = str(netixlan["net_id"])
+        if net_id in net_id_asn:
+            ip_addr = netixlan[ip_field]
+            ip_addr_asn.append(
+                (ip_addr,
+                 net_id_asn[net_id]['asn'],
+                 net_id_asn[net_id]['name'])
+            )
+
+    return ip_addr_asn
+
+def fetch_asn_from_peeringdb(tasks, results):
+    logger.info("Fetching missing ASNs from PeeringDB...")
+    while True:
+        try:
+            ip_addrs = tasks.get(block=False)
+        except queue.Empty:
+            return
+
+        pdb_info = download_from_peeringdb(ip_addrs)
+        if pdb_info:
+            for ip_addr, asn, name in pdb_info:
+                results.append((ip_addr, asn, name))
 
 def print_help_devices():
     s = """
@@ -575,6 +743,14 @@ def main():
         default=4
     )
     group.add_argument(
+        "--use-peeringdb",
+        action="store_true",
+        help="use PeeringDB to obtain the ASN of those entries which "
+             "have not a straight BGP session on the router (for "
+             "example multi-lateral peering sessions at IXs via "
+             "route server)."
+    )
+    group.add_argument(
         "--write-to-cache",
         type=argparse.FileType("w"),
         help="if provided, data fetched from devices are saved "
@@ -606,6 +782,9 @@ def main():
         data = json.load(args.read_from_cache)
 
     mac_peer_table = get_mac_peer_table(data, filters)
+
+    if args.use_peeringdb:
+        enrich_via_peeringdb(mac_peer_table, args, filters)
 
     if args.format == "json":
         json.dump(mac_peer_table, args.output_file, indent=2, sort_keys=True)
