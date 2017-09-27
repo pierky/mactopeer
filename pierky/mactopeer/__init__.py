@@ -47,7 +47,7 @@ class MACToPeer(object):
                            "supported.".format(d["hostname"]))
 
     def __init__(self, devices, filters, output,
-                 threads=4, use_peeringdb=False,
+                 threads=4,
                  read_from_file=None, write_to_file=None):
 
         self.devices = devices
@@ -55,7 +55,6 @@ class MACToPeer(object):
         self.output = output
 
         self.threads = threads
-        self.use_peeringdb = use_peeringdb
 
         self.read_from_file = read_from_file
         self.write_to_file = write_to_file
@@ -74,8 +73,7 @@ class MACToPeer(object):
 
         self.mac_peer_table = self._get_mac_peer_table()
 
-        if self.use_peeringdb:
-            self._enrich_via_peeringdb()
+        self._enrich_via_peeringdb()
 
     def _write_output(self):
         raise NotImplementedError()
@@ -315,12 +313,19 @@ class MACToPeer(object):
     def _enrich_via_peeringdb(self):
         _, _, filter_asn = self.filters
 
+        devices_with_pdb = [_["hostname"] for _ in self.devices
+                                          if _.get("use_peeringdb", False)]
+        if not devices_with_pdb:
+            return
+
         # List of unique IP addresses that have not a BGP peer on the router.
         ip_addrs = {
             "4": [],
             "6": []
         }
         for hostname in self.mac_peer_table:
+            if hostname not in devices_with_pdb:
+                continue
             for mac in self.mac_peer_table[hostname]:
                 entry = self.mac_peer_table[hostname][mac]
                 if entry["ip_addrs"] and not entry["peer_asns"]:
@@ -347,6 +352,9 @@ class MACToPeer(object):
             if chunk:
                 chunks.append(chunk)
 
+        if not chunks:
+            return
+
         # Threads to fetch data from PDB
         tasks = queue.Queue()
         for chunk in chunks:
@@ -362,6 +370,8 @@ class MACToPeer(object):
                     args=(tasks, asns_from_pdb)
                 )
             )
+
+        logger.info("Fetching missing ASNs from PeeringDB...")
         for thread in threads:
             thread.start()
 
@@ -370,6 +380,8 @@ class MACToPeer(object):
 
         # asns_from_pdb is ready
         for hostname in self.mac_peer_table:
+            if hostname not in devices_with_pdb:
+                continue
             for mac in self.mac_peer_table[hostname]:
                 entry = self.mac_peer_table[hostname][mac]
                 if entry["ip_addrs"] and not entry["peer_asns"]:
@@ -466,7 +478,6 @@ class MACToPeer(object):
 
     @staticmethod
     def _fetch_asn_from_peeringdb(tasks, results):
-        logger.info("Fetching missing ASNs from PeeringDB...")
         while True:
             try:
                 ip_addrs = tasks.get(block=False)

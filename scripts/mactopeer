@@ -74,6 +74,7 @@ It must respect the following schema:
     "username": "username",
     "password": "password",
     "arp_only": true|false,
+    "use_peeringdb": true|false,
     "optional_args": {
       "arg1_name": "arg1_value",
       "arg2_name": "arg2_value",
@@ -98,18 +99,23 @@ http://napalm.readthedocs.io/en/latest/support/index.html
 password can be omitted and provided via CLI by running the program with the
 "--password -" argument.
 
-- "arp_only", if set, prevents the program from fetching IPv6 neighbors table
-from the devices.
+- "arp_only" (default: false), if set, prevents the program from fetching IPv6
+neighbors table from the devices.
+
+- "use_peeringdb" (default: false), if set to True, allows the program to
+fetch from PeeringDB ASNs of IP addresses that have not a straight BGP
+neighborship on the router, for example in case of multi-lateral peering via
+route servers at an IXP.
 
 - "optional_args" can be used to pass additional arguments to the NAPALM
 driver used to connect to the device. A list of available arguments can be
 found here:
 http://napalm.readthedocs.io/en/latest/support/index.html#optional-arguments
 
-- "pmacct_ip" is only used when the output format is set to "pmacct"
-("--format pmacct" argument); its value is used to fill the "ip" field of
-pmacct's "bgp_peer_src_as_map" and it can be used to provide an IP address
-different from the one given in "hostname".
+- "pmacct_ip" (default: same as "hostname") is only used when the output
+format is set to "pmacct" ("--format pmacct" argument); its value is used to
+fill the "ip" field of pmacct's "bgp_peer_src_as_map" and it can be used to
+provide an IP address different from the one given in "hostname".
 """
     print(s)
 
@@ -188,6 +194,14 @@ def main():
              "http://napalm.readthedocs.io/en/latest/support/index.html#"
              "optional-arguments"
     )
+    group.add_argument(
+        "--use-peeringdb",
+        action="store_true",
+        help="use PeeringDB to obtain the ASN of those entries which "
+             "have not a straight BGP session on the router (for "
+             "example multi-lateral peering sessions at IXs via "
+             "route server)."
+    )
 
     group = parser.add_argument_group(
         title="Output options"
@@ -248,14 +262,6 @@ def main():
         default=4
     )
     group.add_argument(
-        "--use-peeringdb",
-        action="store_true",
-        help="use PeeringDB to obtain the ASN of those entries which "
-             "have not a straight BGP session on the router (for "
-             "example multi-lateral peering sessions at IXs via "
-             "route server)."
-    )
-    group.add_argument(
         "--write-to-cache",
         type=argparse.FileType("w"),
         help="if provided, data fetched from devices are saved "
@@ -291,7 +297,7 @@ def main():
         devices = build_devices(args)
         lib = mac_to_peer_class(
             devices, filters, args.output_file,
-            threads=args.threads, use_peeringdb=args.use_peeringdb,
+            threads=args.threads,
             read_from_file=args.read_from_cache,
             write_to_file=args.write_to_cache
         )

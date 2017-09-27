@@ -51,7 +51,8 @@ def build_devices(args):
             "password": None,
             "vendor": None,
             "arp_only": False,
-            "optional_args": {}
+            "optional_args": {},
+            "use_peeringdb": False
         })
 
     password = None
@@ -71,6 +72,8 @@ def build_devices(args):
             device["vendor"] = args.vendor
         if args.arp_only:
             device["arp_only"] = True
+        if args.use_peeringdb:
+            device["use_peeringdb"] = True
         if args.optional_args:
             device["optional_args"] = get_optional_args(args.optional_args)
 
