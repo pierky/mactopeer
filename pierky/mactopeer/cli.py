@@ -27,7 +27,7 @@ def get_optional_args(s):
 def build_devices(args):
     if not args.devices and not args.hostname:
         raise CLIParsingError(
-            "ERROR: one of the arguments --devices --hostname is required"
+            "One of the arguments --devices --hostname is required"
         )
 
     devices = []
@@ -36,13 +36,13 @@ def build_devices(args):
             devices = json.load(args.devices)
         except Exception as e:
             raise CLIParsingError(
-                "ERROR: can't parse the JSON file "
+                "Can't parse the JSON file "
                 "given in --devices: {}".format(str(e))
             )
     else:
         if not args.vendor:
             raise CLIParsingError(
-                "ERROR: --vendor is mandatory when --hostname is used."
+                "--vendor is mandatory when --hostname is used."
             )
 
         devices.append({
@@ -57,10 +57,7 @@ def build_devices(args):
     password = None
     if args.password:
         if args.password == '-' and not args.read_from_cache:
-            try:
-                password = getpass.getpass('Enter password: ')
-            except KeyboardInterrupt:
-                raise CLIParsingError("Aborted!")
+            password = getpass.getpass('Enter password: ')
         else:
             password = args.password
 
@@ -77,12 +74,13 @@ def build_devices(args):
         if args.optional_args:
             device["optional_args"] = get_optional_args(args.optional_args)
 
-        if device["hostname"] in unique_hostname:
+        hostname = device.get("hostname", "")
+        if hostname in unique_hostname:
             raise CLIParsingError(
-                "ERROR: duplicate devices: '{}'".format(device["hostname"])
+                "Duplicate devices: '{}'".format(device["hostname"])
             )
 
-        unique_hostname.append(device["hostname"])
+        unique_hostname.append(hostname)
 
     return devices
 

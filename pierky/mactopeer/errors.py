@@ -15,7 +15,12 @@
 
 
 class MACToPeerError(Exception):
-    pass
+
+    def __init__(self, err):
+        self.err = err
+
+    def __str__(self):
+        return "ERROR: {}".format(self.err)
 
 class CLIParsingError(MACToPeerError):
     pass
@@ -23,11 +28,9 @@ class CLIParsingError(MACToPeerError):
 class DeviceConfigError(MACToPeerError):
 
     def __init__(self, err, device):
-        self.err = err
-        self.device = device
+        MACToPeerError.__init__(self, err)
 
-    def __str__(self):
-        return "{} - {}".format(
-            self.err,
-            str(self.device)
+        self.device = device
+        self.err = "Device declaration is not valid - {} - {}".format(
+            err, device
         )
