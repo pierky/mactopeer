@@ -1,0 +1,12 @@
+! router1
+! 192.0.2.1 Test 1
+id=1          ip=router1              src_mac=11:11:11:aa:bb:cc
+
+! router2
+! 192.0.2.2 Test 2
+id=2          ip=router2              src_mac=22:22:22:aa:bb:cc
+
+! router3
+! 192.0.2.3 Test 3
+id=3          ip=router3              src_mac=33:33:33:aa:bb:cc
+

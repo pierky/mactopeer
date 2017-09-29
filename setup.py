@@ -1,6 +1,6 @@
 import os
 from os.path import abspath, dirname, join
-from setuptools import setup, find_packages
+from setuptools import setup
 
 """
 New release procedure
@@ -67,9 +67,11 @@ setup(
 
     packages=["pierky", "pierky.mactopeer"],
     namespace_packages=["pierky"],
-    
+
     license="GPLv3",
-    description="Automatically fetch MAC/IP address tables (ARP and IPv6 neighbors) from devices and build MAC address to BGP peer ASN mappings.",
+    description="Automatically fetch MAC/IP address tables (ARP and IPv6 "
+                "neighbors) from devices and build MAC address to BGP "
+                "peer ASN mappings.",
     long_description=long_description,
     url="https://github.com/pierky/mactopeer",
     download_url="https://github.com/pierky/mactopeer",
@@ -105,5 +107,5 @@ setup(
 
         "Topic :: Internet :: WWW/HTTP",
         "Topic :: System :: Networking",
-    ],
+    ]
 )

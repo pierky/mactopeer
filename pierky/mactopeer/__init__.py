@@ -17,10 +17,10 @@ import ipaddress
 import json
 import logging
 import math
-import os
 from six.moves import queue
 from six.moves.urllib.request import urlopen
 from six.moves.urllib.error import HTTPError
+from six import u
 import threading
 import napalm_base
 
@@ -28,6 +28,7 @@ from .errors import DeviceConfigError
 
 
 logger = logging.getLogger("mac-to-peer")
+
 
 class MACToPeer(object):
 
@@ -51,7 +52,7 @@ class MACToPeer(object):
                  read_from_file=None, write_to_file=None):
 
         self.devices = devices
-        self.filters = filters
+        self.filters = filters or ([], [], [])
         self.output = output
 
         self.threads = threads
@@ -74,6 +75,8 @@ class MACToPeer(object):
         self.mac_peer_table = self._get_mac_peer_table()
 
         self._enrich_via_peeringdb()
+
+        return self.mac_peer_table
 
     def _write_output(self):
         raise NotImplementedError()
@@ -131,12 +134,12 @@ class MACToPeer(object):
         except napalm_base.exceptions.ModuleImportError as e:
             url = "https://napalm.readthedocs.io/en/latest/support/index.html"
             logger.error("Can't load the NAPALM driver for vendor '{}': {} - "
-                        "Please be sure the vendor is one of those supported "
-                        "by NAPALM (the 'vendor' argument must be filled with "
-                        "a value taken from the 'Driver Name' row of the table "
-                        "at this URL: {}).".format(
+                         "Please be sure the vendor is one of those supported "
+                         "by NAPALM (the 'vendor' argument must be filled "
+                         "with a value taken from the 'Driver Name' row of "
+                         "the table at this URL: {}).".format(
                             device["vendor"], str(e), url
-                        ))
+                         ))
             return None
 
         connection = driver(
@@ -167,15 +170,18 @@ class MACToPeer(object):
 
         ipv6_neighbors_table = []
         if not device.get("arp_only", False):
-            logger.info("Getting IPv6 neighbors table from {}...".format(hostname))
+            logger.info("Getting IPv6 neighbors table from {}...".format(
+                hostname
+            ))
             try:
                 ipv6_neighbors_table = connection.get_ipv6_neighbors_table()
             except AttributeError as e:
                 logger.warning("Skipping IPv6 neighbors table: "
                                "please consult the Caveats section of README")
             except Exception as e:
-                logger.error("Can't get IPv6 neighbors table from {}: {}".format(
-                    hostname, str(e)))
+                logger.error("Can't get IPv6 neighbors table "
+                             "from {}: {}".format(
+                                hostname, str(e)))
                 return None
 
         bgp_neighbors = {}
@@ -246,7 +252,7 @@ class MACToPeer(object):
 
                 # IP address filtered out?
                 if filter_ip:
-                    ip_obj = ipaddress.ip_address(ip.decode("utf-8"))
+                    ip_obj = ipaddress.ip_address(u(ip))
                     filtered = False
                     for filtered_ip in filter_ip:
                         if ip_obj in filtered_ip:
@@ -311,10 +317,25 @@ class MACToPeer(object):
         return res
 
     def _enrich_via_peeringdb(self):
+
+        def ip_is_global(ip_addr_obj):
+            if hasattr(ip_addr_obj, "is_global"):
+                return ip_addr_obj.is_global
+            return not (
+                ip_addr_obj.is_multicast or
+                ip_addr_obj.is_private or
+                ip_addr_obj.is_unspecified or
+                ip_addr_obj.is_reserved or
+                ip_addr_obj.is_loopback or
+                ip_addr_obj.is_link_local
+            )
+
         _, _, filter_asn = self.filters
 
-        devices_with_pdb = [_["hostname"] for _ in self.devices
-                                          if _.get("use_peeringdb", False)]
+        devices_with_pdb = [
+            d["hostname"] for d in self.devices
+            if d.get("use_peeringdb", False)
+        ]
         if not devices_with_pdb:
             return
 
@@ -330,14 +351,18 @@ class MACToPeer(object):
                 entry = self.mac_peer_table[hostname][mac]
                 if entry["ip_addrs"] and not entry["peer_asns"]:
                     for ip_addr in entry["ip_addrs"]:
-                        ip_addr_obj = ipaddress.ip_address(ip_addr)
-                        if not ip_addr_obj.is_global:
+                        ip_addr_obj = ipaddress.ip_address(
+                            u(ip_addr)
+                        )
+
+                        if not ip_is_global(ip_addr_obj):
                             continue
+
                         ip_addr = str(ip_addr_obj)
                         if ip_addr not in ip_addrs[str(ip_addr_obj.version)]:
                             ip_addrs[str(ip_addr_obj.version)].append(ip_addr)
 
-        # Chunks of max 20 IP addresses per AFI that will be fetched from PeeringDB
+        # Chunks of max 20 IP addr per AFI that will be fetched from PeeringDB
         chunks = []
         for ip_ver in ["4", "6"]:
             chunk = []
@@ -360,7 +385,7 @@ class MACToPeer(object):
         for chunk in chunks:
             tasks.put(chunk)
 
-        # asns_from_pdb will contain the result: [("ip_addr", "asn", "net name")]
+        # asns_from_pdb will contain the result: [("ip_addr", "asn", "descr")]
         asns_from_pdb = []
         threads = []
         for i in range(self.threads):
@@ -470,8 +495,8 @@ class MACToPeer(object):
                 ip_addr = netixlan[ip_field]
                 ip_addr_asn.append(
                     (ip_addr,
-                    net_id_asn[net_id]['asn'],
-                    net_id_asn[net_id]['name'])
+                     net_id_asn[net_id]['asn'],
+                     net_id_asn[net_id]['name'])
                 )
 
         return ip_addr_asn
@@ -489,11 +514,13 @@ class MACToPeer(object):
                 for ip_addr, asn, name in pdb_info:
                     results.append((ip_addr, asn, name))
 
+
 class MACToPeer_JSON(MACToPeer):
 
     def _write_output(self):
         json.dump(self.mac_peer_table,
                   self.output, indent=2, sort_keys=True)
+
 
 class MACToPeer_pmacct(MACToPeer):
 
@@ -514,7 +541,9 @@ class MACToPeer_pmacct(MACToPeer):
 
             pmacct_info.append((hostname, pmacct_ip))
 
-        tpl = "id={asn:10} ip={ip:" + str(max_pmacct_ip_len) + "} src_mac={mac}\n\n"
+        tpl = ("id={asn:10} "
+               "ip={ip:" + str(max_pmacct_ip_len) + "} "
+               "src_mac={mac}\n\n")
 
         for hostname, pmacct_ip in pmacct_info:
             self.output.write("! {}\n".format(hostname))
@@ -528,7 +557,8 @@ class MACToPeer_pmacct(MACToPeer):
                             ip=", ".join(peer_asns[asn]["ip_addrs"]),
                             name=peer_asns[asn]["description"],
                             via_pdb=" (from PeeringDB)"
-                                    if peer_asns[asn].get("from_peeringdb", False)
+                                    if peer_asns[asn].get("from_peeringdb",
+                                                          False)
                                     else ""
                         )
                     )

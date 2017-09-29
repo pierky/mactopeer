@@ -1,0 +1,9 @@
+[
+{
+  "vendor": "ios",
+  "optional_args": {
+    "transport": "telnet",
+    "port": 23
+  }
+}
+]

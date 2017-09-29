@@ -1,0 +1,6 @@
+pytest
+pytest-catchlog
+pytest-cov
+pylama
+napalm-base
+-r requirements.txt

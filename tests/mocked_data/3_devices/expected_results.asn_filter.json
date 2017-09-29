@@ -1,0 +1,50 @@
+{
+  "router2": {
+    "22:22:22:aa:bb:cc": {
+      "ip_addrs": [
+        "192.0.2.2"
+      ], 
+      "peer_asns": {
+        "2": {
+          "ip_addrs": [
+            "192.0.2.2"
+          ], 
+          "description": "Test 2"
+        }
+      }, 
+      "ifaces": [
+        "eth0"
+      ]
+    }
+  }, 
+  "router3": {
+    "33:33:33:aa:bb:cc": {
+      "ip_addrs": [
+        "192.0.2.3"
+      ], 
+      "peer_asns": {
+        "3": {
+          "ip_addrs": [
+            "192.0.2.3"
+          ], 
+          "description": "Test 3"
+        }
+      }, 
+      "ifaces": [
+        "eth0"
+      ]
+    }
+  }, 
+  "router1": {
+    "11:11:11:aa:bb:cc": {
+      "ip_addrs": [
+        "192.0.2.1"
+      ], 
+      "peer_asns": {
+      }, 
+      "ifaces": [
+        "eth0"
+      ]
+    }
+  }
+}

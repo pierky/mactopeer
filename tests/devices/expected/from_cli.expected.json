@@ -1,0 +1,11 @@
+[
+{
+  "hostname": "router1.example.com",
+  "vendor": "ios",
+  "username": null,
+  "password": null,
+  "arp_only": false,
+  "optional_args": {},
+  "use_peeringdb": false
+}
+]

@@ -1,0 +1,4 @@
+! router1
+! 192.0.2.1 Test 1
+id=65535      ip=router1              src_mac=11:22:33:44:55:66
+

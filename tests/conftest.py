@@ -13,26 +13,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import pytest
 
-class MACToPeerError(Exception):
-
-    def __init__(self, err):
-        self.err = err
-
-    def __str__(self):
-        return "ERROR: {}".format(self.err)
-
-
-class CLIParsingError(MACToPeerError):
-    pass
-
-
-class DeviceConfigError(MACToPeerError):
-
-    def __init__(self, err, device):
-        MACToPeerError.__init__(self, err)
-
-        self.device = device
-        self.err = "Device declaration is not valid - {} - {}".format(
-            err, device
-        )
+## Stolen from https://stackoverflow.com/a/39035226
+#def pytest_itemcollected(item):
+#    par = item.parent.obj
+#    node = item.obj
+#    pref = par.__doc__.strip() if par.__doc__ else par.__class__.__name__
+#    suf = node.__doc__.strip() if node.__doc__ else node.__name__
+#    if pref or suf:
+#        item._nodeid = ', '.join((pref, suf))

@@ -1,0 +1,7 @@
+! router1
+! 192.0.2.2 Test 2
+id=2          ip=router1              src_mac=11:22:33:44:55:66
+
+! 192.0.2.1, 2001:db8::1 Test 1
+id=65535      ip=router1              src_mac=11:22:33:44:55:66
+

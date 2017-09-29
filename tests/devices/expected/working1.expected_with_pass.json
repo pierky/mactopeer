@@ -1,0 +1,25 @@
+[
+{
+  "hostname": "192.168.0.1",
+  "password": "password from cli",
+  "vendor": "ios",
+  "optional_args": {
+    "transport": "telnet",
+    "port": 23
+  }
+},
+{
+  "hostname": "router1.example.com",
+  "password": "password from cli",
+  "vendor": "eos",
+  "pmacct_ip": "10.0.0.1",
+  "use_peeringdb": true
+},
+{
+  "hostname": "2001:db8::1",
+  "username": "test",
+  "password": "password from cli",
+  "vendor": "ios",
+  "pmacct_ip": "172.16.0.1"
+}
+]

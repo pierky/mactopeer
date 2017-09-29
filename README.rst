@@ -1,7 +1,7 @@
 mac-to-peer
 ===========
 
-|PYPI Version| |Python Versions|
+|PYPIVersion| |PythonVersions| |BuildStatus| |Coveralls|
 
 Automatically fetch MAC/IP address tables (ARP and IPv6 neighbors) from devices and build MAC address to BGP peer ASN mappings.
 
@@ -108,6 +108,10 @@ Pier Carlo Chiodi - https://pierky.com/
 
 Blog: https://blog.pierky.com/ Twitter: `@pierky <https://twitter.com/pierky>`_
 
-.. |PYPI Version| image:: https://img.shields.io/pypi/v/mactopeer.svg
+.. |PYPIVersion| image:: https://img.shields.io/pypi/v/mactopeer.svg
     :target: https://pypi.python.org/pypi/mactopeer/
-.. |Python Versions| image:: https://img.shields.io/pypi/pyversions/mactopeer.svg
+.. |PythonVersions| image:: https://img.shields.io/pypi/pyversions/mactopeer.svg
+.. |BuildStatus| image:: https://travis-ci.org/pierky/mactopeer.svg?branch=master
+    :target: https://travis-ci.org/pierky/mactopeer
+.. |Coveralls| image:: https://coveralls.io/repos/github/pierky/mactopeer/badge.svg?branch=master
+    :target: https://coveralls.io/github/pierky/mactopeer?branch=master

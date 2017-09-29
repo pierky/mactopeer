@@ -1,0 +1,4 @@
+! router1
+! 80.249.208.68 RIPE NCC (from PeeringDB)
+id=3333       ip=router1              src_mac=11:22:33:44:55:66
+

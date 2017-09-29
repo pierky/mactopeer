@@ -1,0 +1,21 @@
+{
+  "router1": {
+    "11:22:33:44:55:66": {
+      "ip_addrs": [
+        "80.249.208.68"
+      ], 
+      "peer_asns": {
+        "3333": {
+          "ip_addrs": [
+            "80.249.208.68"
+          ], 
+          "description": "RIPE NCC", 
+          "from_peeringdb": true
+        }
+      }, 
+      "ifaces": [
+        "eth0"
+      ]
+    }
+  }
+}

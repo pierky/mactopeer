@@ -1,6 +1,6 @@
 *.swp
 private/
-*.json
+var/
 napalm_ios
 
 # Byte-compiled / optimized / DLL files
