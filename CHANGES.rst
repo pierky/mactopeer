@@ -1,6 +1,15 @@
 Change log
 ==========
 
+v0.3.0
+------
+
+- Improvement: made ``use_peeringdb`` an attribute of devices' declaration.
+
+- Improvement: some fixes.
+
+Also, the tool can be used as a library now.
+
 v0.2.0
 ------
 

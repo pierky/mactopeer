@@ -5,13 +5,13 @@ Usage
 
   usage: mactopeer [-h] [--help-devices] [--devices DEVICES]
                    [--hostname HOSTNAME] [-u USERNAME] [-p PASSWORD] [-v VENDOR]
-                   [--arp-only] [--optional-args OPTIONAL_ARGS] [-o OUTPUT_FILE]
-                   [-f {json,pmacct}] [--ignore-mac LIST_OR_FILE]
-                   [--ignore-ip LIST_OR_FILE] [--ignore-asn LIST_OR_FILE]
-                   [--threads THREADS] [--use-peeringdb]
+                   [--arp-only] [--optional-args OPTIONAL_ARGS]
+                   [--use-peeringdb] [-o OUTPUT_FILE] [-f {json,pmacct}]
+                   [--ignore-mac LIST_OR_FILE] [--ignore-ip LIST_OR_FILE]
+                   [--ignore-asn LIST_OR_FILE] [--threads THREADS]
                    [--write-to-cache CACHE_FILE] [--read-from-cache CACHE_FILE]
   
-  mac-to-peer v0.2.0: a tool to automatically build a list of BGP neighbors
+  mac-to-peer v0.3.0: a tool to automatically build a list of BGP neighbors
   starting from the MAC address of their peers.
   
   optional arguments:
@@ -52,6 +52,10 @@ Usage
                           Napalm drivers. For the list of supported optional
                           arguments see this URL: http://napalm.readthedocs.io/e
                           n/latest/support/index.html#optional-arguments
+    --use-peeringdb       use PeeringDB to obtain the ASN of those entries which
+                          have not a straight BGP session on the router (for
+                          example multi-lateral peering sessions at IXs via
+                          route server).
   
   Output options:
     -o OUTPUT_FILE, --output OUTPUT_FILE
@@ -80,10 +84,6 @@ Usage
   Misc options:
     --threads THREADS     number of threads that will be used to fetch info from
                           devices. Default: 4.
-    --use-peeringdb       use PeeringDB to obtain the ASN of those entries which
-                          have not a straight BGP session on the router (for
-                          example multi-lateral peering sessions at IXs via
-                          route server).
     --write-to-cache CACHE_FILE
                           if provided, data fetched from devices are saved into
                           this file for later use via the --read-from-cache
@@ -111,6 +111,7 @@ Devices JSON file schema
       "username": "username",
       "password": "password",
       "arp_only": true|false,
+      "use_peeringdb": true|false,
       "optional_args": {
         "arg1_name": "arg1_value",
         "arg2_name": "arg2_value",
@@ -135,16 +136,21 @@ Devices JSON file schema
   password can be omitted and provided via CLI by running the program with the
   "--password -" argument.
   
-  - "arp_only", if set, prevents the program from fetching IPv6 neighbors table
-  from the devices.
+  - "arp_only" (default: false), if set, prevents the program from fetching IPv6
+  neighbors table from the devices.
+  
+  - "use_peeringdb" (default: false), if set to True, allows the program to
+  fetch from PeeringDB ASNs of IP addresses that have not a straight BGP
+  neighborship on the router, for example in case of multi-lateral peering via
+  route servers at an IXP.
   
   - "optional_args" can be used to pass additional arguments to the NAPALM
   driver used to connect to the device. A list of available arguments can be
   found here:
   http://napalm.readthedocs.io/en/latest/support/index.html#optional-arguments
   
-  - "pmacct_ip" is only used when the output format is set to "pmacct"
-  ("--format pmacct" argument); its value is used to fill the "ip" field of
-  pmacct's "bgp_peer_src_as_map" and it can be used to provide an IP address
-  different from the one given in "hostname".
+  - "pmacct_ip" (default: same as "hostname") is only used when the output
+  format is set to "pmacct" ("--format pmacct" argument); its value is used to
+  fill the "ip" field of pmacct's "bgp_peer_src_as_map" and it can be used to
+  provide an IP address different from the one given in "hostname".
   
